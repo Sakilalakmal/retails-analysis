@@ -219,60 +219,60 @@ FROM fact_transaction
 -- What is each customer�s cohort (first purchase month)
 
 WITH month AS (
-SELECT 
-	customer_id,
-	MIN(sale_date) AS first_date
-FROM fact_transaction
-GROUP BY customer_id
-)
-SELECT
-	customer_id,
-	FORMAT(first_date,'MMM-yyyy') first_date
-FROM month;
+	SELECT 
+		customer_id,
+		MIN(sale_date) AS first_date
+	FROM fact_transaction
+	GROUP BY customer_id
+	)
+	SELECT
+		customer_id,
+		FORMAT(first_date,'MMM-yyyy') first_date
+	FROM month;
 
 -- How many customers per cohort
 
 WITH month AS (
-SELECT 
-	customer_id,
-	MIN(sale_date) AS first_date
-FROM fact_transaction
-GROUP BY customer_id
-)
-SELECT
-	FORMAT(first_date,'yyyy-MMM') cohort_month,
-	COUNT(customer_id) AS customer_count
-FROM month
-GROUP BY FORMAT(first_date,'yyyy-MMM')
-ORDER BY FORMAT(first_date,'yyyy-MMM') ASC
+	SELECT 
+		customer_id,
+		MIN(sale_date) AS first_date
+	FROM fact_transaction
+		GROUP BY customer_id
+	)
+	SELECT
+		FORMAT(first_date,'yyyy-MMM') cohort_month,
+		COUNT(customer_id) AS customer_count
+	FROM month
+		GROUP BY FORMAT(first_date,'yyyy-MMM')
+		ORDER BY FORMAT(first_date,'yyyy-MMM') ASC
 
 -- Retention: How many customers return each month
 
 WITH first_order_date AS (
-SELECT
-	customer_id,
-	MIN(sale_date) AS first_order_date
-FROM fact_transaction
-GROUP BY customer_id
-)
-,
-second_cte AS (
-SELECT
-	f.customer_id,
-	FORMAT(s.first_order_date, 'yyyy-MMM') AS first_order_month,
-	FORMAT(f.sale_date,'yyyy-MMM') AS every_month
-FROM fact_transaction AS f
-LEFT JOIN first_order_date AS s
-ON f.customer_id = s.customer_id
-)
-SELECT
-	first_order_month,
-	every_month,
-	COUNT(distinct customer_id) customer_count
-FROM second_cte
-WHERE every_month > first_order_month
-GROUP BY first_order_month,every_month
-ORDER BY first_order_month,every_month
+	SELECT
+		customer_id,
+		MIN(sale_date) AS first_order_date
+	FROM fact_transaction
+		GROUP BY customer_id
+	)
+	,
+	second_cte AS (
+	SELECT
+		f.customer_id,
+		FORMAT(s.first_order_date, 'yyyy-MMM') AS first_order_month,
+		FORMAT(f.sale_date,'yyyy-MMM') AS every_month
+	FROM fact_transaction AS f
+		LEFT JOIN first_order_date AS s
+		ON f.customer_id = s.customer_id
+	)
+	SELECT
+		first_order_month,
+		every_month,
+		COUNT(distinct customer_id) customer_count
+	FROM second_cte
+		WHERE every_month > first_order_month
+		GROUP BY first_order_month,every_month
+		ORDER BY first_order_month,every_month
 
 -- Cohort retention rate
 -- cohort
@@ -281,36 +281,48 @@ ORDER BY first_order_month,every_month
 -- final select
 -- cohort customers count / total_customers in chort
 WITH first_order_date AS (
+	SELECT
+		customer_id,
+		MIN(sale_date) AS first_purchase_date
+	FROM fact_transaction
+		GROUP BY customer_id
+	),
+	activity AS (
+	SELECT
+		f.customer_id,
+		FORMAT(fo.first_purchase_date, 'yyyy-MMM') AS cohort_month,
+		FORMAT(f.sale_date,'yyyy-MMM') AS activity_month
+	FROM fact_transaction AS f
+		LEFT JOIN first_order_date AS fo
+		ON f.customer_id = fo.customer_id
+	),
+	cohort_size AS (
+	SELECT
+		cohort_month,
+		COUNT(DISTINCT customer_id) AS cohort_customers
+	FROM activity
+		GROUP BY cohort_month
+	)
+	SELECT
+		a.cohort_month,
+		a.activity_month,
+		COUNT(DISTINCT a.customer_id) AS active_customers,
+		c.cohort_customers,
+		CONCAT(CAST(COUNT(DISTINCT a.customer_id) * 100 / c.cohort_customers AS decimal(18,2)), '%') AS retention_rate
+	FROM activity AS a
+		LEFT JOIN cohort_size AS c
+		ON a.cohort_month = c.cohort_month
+		GROUP BY a.cohort_month, a.activity_month, c.cohort_customers
+		ORDER BY a.cohort_month, a.activity_month
+
+-- Calculate a 7-day rolling average of total sales based on sale_date
+
 SELECT
-	customer_id,
-	MIN(sale_date) AS first_purchase_date
+	sale_date,
+	SUM(total_sale) AS total_sales,
+	CAST(AVG(SUM(total_sale)) 
+	OVER(ORDER BY sale_date 
+		ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS decimal(18,2)) 
+			AS rolling_avg_7d
 FROM fact_transaction
-GROUP BY customer_id
-),
-activity AS (
-SELECT
-	f.customer_id,
-	FORMAT(fo.first_purchase_date, 'yyyy-MMM') AS cohort_month,
-	FORMAT(f.sale_date,'yyyy-MMM') AS activity_month
-FROM fact_transaction AS f
-LEFT JOIN first_order_date AS fo
-ON f.customer_id = fo.customer_id
-),
-cohort_size AS (
-SELECT
-	cohort_month,
-	COUNT(DISTINCT customer_id) AS cohort_customers
-FROM activity
-GROUP BY cohort_month
-)
-SELECT
-	a.cohort_month,
-	a.activity_month,
-	COUNT(DISTINCT a.customer_id) AS active_customers,
-	c.cohort_customers,
-	CONCAT(CAST(COUNT(DISTINCT a.customer_id) * 100 / c.cohort_customers AS decimal(18,2)), '%') AS retention_rate
-FROM activity AS a
-LEFT JOIN cohort_size AS c
-ON a.cohort_month = c.cohort_month
-GROUP BY a.cohort_month, a.activity_month, c.cohort_customers
-ORDER BY a.cohort_month, a.activity_month
+	GROUP BY sale_date
