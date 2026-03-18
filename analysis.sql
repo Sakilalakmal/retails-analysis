@@ -426,3 +426,20 @@ WITH customer_sales AS (
 		LEFT JOIN dim_customer AS cust
 		ON cs.customer_id = cust.customer_id
 		WHERE cs.total_sale > cs.previous_sale * 1.5;
+
+--* Average Days Between Purchases (Customer Behavior)
+
+WITH prev_sale_date AS (
+	SELECT
+		customer_id,
+		sale_date,
+		LAG(sale_date) OVER(PARTITION BY customer_id ORDER BY sale_date) AS previous_purchase_date
+	FROM fact_transaction
+	)
+	SELECT
+		customer_id,
+		AVG(DATEDIFF(DAY, previous_purchase_date, sale_date)) AS days_between_purchases
+	FROM prev_sale_date
+		WHERE previous_purchase_date IS NOT NULL
+		GROUP BY customer_id
+
