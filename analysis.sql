@@ -325,4 +325,22 @@ SELECT
 		ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS decimal(18,2)) 
 			AS rolling_avg_7d
 FROM fact_transaction
-	GROUP BY sale_date
+	GROUP BY sale_date;
+
+
+-- Calculate the difference between current transaction sales and the average of the previous 3 transactions (per customer)
+SELECT *,
+	(total_sales - avg_previous_3_transactions) AS sales_difference
+ FROM (
+SELECT
+	customer_id,
+	sale_date,
+	SUM(total_sale) AS total_sales,
+	CAST(AVG(SUM(total_sale)) 
+		OVER (PARTITION BY customer_id ORDER BY sale_date 
+			ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+				) AS decimal(18,2)) AS avg_previous_3_transactions
+FROM fact_transaction
+GROUP BY customer_id, sale_date
+) t
+
