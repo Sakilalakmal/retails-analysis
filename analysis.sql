@@ -329,6 +329,7 @@ FROM fact_transaction
 
 
 -- Calculate the difference between current transaction sales and the average of the previous 3 transactions (per customer)
+
 SELECT *,
 	(total_sales - avg_previous_3_transactions) AS sales_difference
  FROM (
@@ -344,3 +345,84 @@ FROM fact_transaction
 GROUP BY customer_id, sale_date
 ) t
 
+
+--* Identify customers whose spending is accelerating (momentum customers)
+--* 👉 These are customers whose recent purchases are higher than their historical average
+
+WITH customer_sales AS (
+	SELECT
+		customer_id,
+		sale_date,
+		total_sale,
+		AVG(total_sale) OVER(PARTITION BY customer_id ORDER BY sale_date
+			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS historical_avg,
+		AVG(total_sale)  OVER(PARTITION BY customer_id ORDER BY sale_date
+			ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS avg_previous_3_transactions
+	FROM fact_transaction
+	)
+		SELECT
+		*
+		FROM customer_sales
+		WHERE avg_previous_3_transactions > historical_avg
+
+
+--* Find the top spending customer in each age group, along with their rank inside that age group
+WITH customer_total_sales AS (
+	SELECT 
+		cust.customer_id,
+		cust.age,
+		SUM(fact.total_sale) AS total_sales,
+		COUNT(fact.transactions_id) AS transaction_count
+	FROM fact_transaction AS fact
+		LEFT JOIN dim_customer AS cust 
+		ON fact.customer_id = cust.customer_id
+		GROUP BY cust.customer_id, cust.age
+	),
+	customer_rank AS (
+	SELECT
+		RANK() 
+			OVER(PARTITION BY age ORDER BY total_sales DESC) 
+				AS age_group_rank,
+		customer_id,
+		age,
+		transaction_count
+	FROM customer_total_sales
+	)
+	SELECT
+		*
+	FROM customer_rank
+		WHERE age_group_rank = 1
+
+--* Find customers whose last purchase is significantly higher than their previous purchase, and include their age + gender
+WITH customer_sales AS (
+	SELECT
+		customer_id,
+		sale_date,
+		total_sale,
+		LAG(total_sale) OVER(PARTITION BY customer_id ORDER BY sale_date) AS previous_sale,
+		ROW_NUMBER() OVER(PARTITION BY customer_id ORDER BY sale_date DESC) AS rn
+	FROM fact_transaction
+	),
+	sale_difference AS (
+	SELECT 
+		customer_id,
+		sale_date,
+		total_sale,
+		previous_sale,
+		rn,
+		total_sale - previous_sale AS sale_difference
+	FROM customer_sales
+		WHERE rn = 1
+	)
+	SELECT
+		cs.customer_id,
+		cs.sale_date,
+		cs.total_sale,
+		cs.previous_sale,
+		cs.sale_difference,
+		cust.age,
+		cust.gender
+	FROM sale_difference AS cs
+		LEFT JOIN dim_customer AS cust
+		ON cs.customer_id = cust.customer_id
+		WHERE cs.total_sale > cs.previous_sale * 1.5;
